@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import authRoutes from "./routes/auth.routes";
+import taskRoutes from "./routes/task.routes";
 import { errorHandler, notFound } from "./middleware/error.middleware";
 import { prisma } from "./lib/prisma";
 
@@ -33,6 +34,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/tasks", taskRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
