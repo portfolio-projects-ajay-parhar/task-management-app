@@ -1,0 +1,28 @@
+{
+  "name": "task-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Task management app — Express + Prisma backend and Vite + React frontend",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "build": "npm run build --workspaces --if-present",
+    "build:backend": "npm run build -w backend",
+    "build:frontend": "npm run build -w frontend",
+    "start:backend": "npm run start -w backend",
+    "db:generate": "npm run db:generate -w backend",
+    "db:migrate": "npm run db:migrate -w backend",
+    "db:studio": "npm run db:studio -w backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
