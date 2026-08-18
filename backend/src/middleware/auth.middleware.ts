@@ -10,6 +10,11 @@ export interface AuthRequest extends Request {
   };
 }
 
+type CachedUser = NonNullable<AuthRequest["user"]>;
+
+const userCache = new Map<string, { user: CachedUser; expiresAt: number }>();
+const USER_CACHE_MS = 60_000;
+
 export const authenticate = async (
   req: AuthRequest,
   res: Response,
@@ -29,6 +34,13 @@ export const authenticate = async (
     const token = authHeader.split(" ")[1];
     const decoded = verifyToken(token);
 
+    const cached = userCache.get(decoded.userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      req.user = cached.user;
+      next();
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: { id: true, email: true, name: true },
@@ -43,6 +55,7 @@ export const authenticate = async (
     }
 
     req.user = user;
+    userCache.set(user.id, { user, expiresAt: Date.now() + USER_CACHE_MS });
     next();
   } catch {
     res.status(401).json({
