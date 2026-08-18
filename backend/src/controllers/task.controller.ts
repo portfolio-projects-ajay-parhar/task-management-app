@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { Prisma, TaskStatus, Priority } from "@prisma/client";
+import { Prisma, Task, TaskStatus, Priority } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AuthRequest } from "../middleware/auth.middleware";
 
@@ -20,23 +20,6 @@ export const getTasks = async (
       limit = "10",
     } = req.query as Record<string, string>;
 
-    const where: Prisma.TaskWhereInput = { userId };
-
-    if (status && Object.values(TaskStatus).includes(status as TaskStatus)) {
-      where.status = status as TaskStatus;
-    }
-
-    if (priority && Object.values(Priority).includes(priority as Priority)) {
-      where.priority = priority as Priority;
-    }
-
-    if (search && search.trim()) {
-      where.OR = [
-        { title: { contains: search.trim(), mode: "insensitive" } },
-        { description: { contains: search.trim(), mode: "insensitive" } },
-      ];
-    }
-
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
     const skip = (pageNum - 1) * limitNum;
@@ -51,15 +34,33 @@ export const getTasks = async (
     const orderByField = validSortFields.includes(sortBy) ? sortBy : "createdAt";
     const orderByDirection = sortOrder === "asc" ? "asc" : "desc";
 
-    const [tasks, totalCount] = await Promise.all([
-      prisma.task.findMany({
-        where,
-        orderBy: { [orderByField]: orderByDirection },
-        skip,
-        take: limitNum,
-      }),
-      prisma.task.count({ where }),
-    ]);
+    const filters: Prisma.Sql[] = [Prisma.sql`"userId" = ${userId}`];
+
+    if (status && Object.values(TaskStatus).includes(status as TaskStatus)) {
+      filters.push(Prisma.sql`status = ${status}::"TaskStatus"`);
+    }
+
+    if (priority && Object.values(Priority).includes(priority as Priority)) {
+      filters.push(Prisma.sql`priority = ${priority}::"Priority"`);
+    }
+
+    if (search && search.trim()) {
+      const term = `%${search.trim()}%`;
+      filters.push(
+        Prisma.sql`(title ILIKE ${term} OR description ILIKE ${term})`
+      );
+    }
+
+    const rows = await prisma.$queryRaw<(Task & { total_count: number })[]>`
+      SELECT *, COUNT(*) OVER()::int AS total_count
+      FROM tasks
+      WHERE ${Prisma.join(filters, " AND ")}
+      ORDER BY ${Prisma.raw(`"${orderByField}" ${orderByDirection} NULLS LAST`)}
+      LIMIT ${limitNum} OFFSET ${skip}
+    `;
+
+    const totalCount = rows[0]?.total_count ?? 0;
+    const tasks = rows.map(({ total_count: _total, ...task }) => task);
 
     const totalPages = Math.ceil(totalCount / limitNum);
 
@@ -145,30 +146,36 @@ export const updateTask = async (
     const { id } = req.params;
     const userId = req.user!.id;
 
-    const existingTask = await prisma.task.findFirst({
-      where: { id, userId },
-    });
+    const { title, description, status, priority, dueDate } = req.body;
 
-    if (!existingTask) {
+    const sets: Prisma.Sql[] = [Prisma.sql`"updatedAt" = CURRENT_TIMESTAMP`];
+    if (title !== undefined) sets.push(Prisma.sql`title = ${title.trim()}`);
+    if (description !== undefined) {
+      sets.push(Prisma.sql`description = ${description?.trim() || null}`);
+    }
+    if (status !== undefined) {
+      sets.push(Prisma.sql`status = ${status}::"TaskStatus"`);
+    }
+    if (priority !== undefined) {
+      sets.push(Prisma.sql`priority = ${priority}::"Priority"`);
+    }
+    if (dueDate !== undefined) {
+      sets.push(
+        Prisma.sql`"dueDate" = ${dueDate ? new Date(dueDate) : null}`
+      );
+    }
+
+    const [task] = await prisma.$queryRaw<Task[]>`
+      UPDATE tasks
+      SET ${Prisma.join(sets)}
+      WHERE id = ${id} AND "userId" = ${userId}
+      RETURNING *
+    `;
+
+    if (!task) {
       res.status(404).json({ success: false, message: "Task not found." });
       return;
     }
-
-    const { title, description, status, priority, dueDate } = req.body;
-
-    const updateData: Prisma.TaskUpdateInput = {};
-    if (title !== undefined) updateData.title = title.trim();
-    if (description !== undefined)
-      updateData.description = description?.trim() || null;
-    if (status !== undefined) updateData.status = status;
-    if (priority !== undefined) updateData.priority = priority;
-    if (dueDate !== undefined)
-      updateData.dueDate = dueDate ? new Date(dueDate) : null;
-
-    const task = await prisma.task.update({
-      where: { id },
-      data: updateData,
-    });
 
     res.status(200).json({
       success: true,
@@ -189,16 +196,14 @@ export const deleteTask = async (
     const { id } = req.params;
     const userId = req.user!.id;
 
-    const existingTask = await prisma.task.findFirst({
+    const deleted = await prisma.task.deleteMany({
       where: { id, userId },
     });
 
-    if (!existingTask) {
+    if (deleted.count === 0) {
       res.status(404).json({ success: false, message: "Task not found." });
       return;
     }
-
-    await prisma.task.delete({ where: { id } });
 
     res.status(200).json({
       success: true,
@@ -217,43 +222,48 @@ export const getTaskStats = async (
   try {
     const userId = req.user!.id;
 
-    const [statusCounts, priorityCounts, overdueTasks] = await Promise.all([
-      prisma.task.groupBy({
-        by: ["status"],
-        where: { userId },
-        _count: true,
-      }),
-      prisma.task.groupBy({
-        by: ["priority"],
-        where: { userId },
-        _count: true,
-      }),
-      prisma.task.count({
-        where: {
-          userId,
-          dueDate: { lt: new Date() },
-          status: { not: TaskStatus.DONE },
-        },
-      }),
-    ]);
+    const [row] = await prisma.$queryRaw<
+      {
+        total: number;
+        todo: number;
+        in_progress: number;
+        done: number;
+        low: number;
+        medium: number;
+        high: number;
+        overdue: number;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'TODO')::int AS todo,
+        COUNT(*) FILTER (WHERE status = 'IN_PROGRESS')::int AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'DONE')::int AS done,
+        COUNT(*) FILTER (WHERE priority = 'LOW')::int AS low,
+        COUNT(*) FILTER (WHERE priority = 'MEDIUM')::int AS medium,
+        COUNT(*) FILTER (WHERE priority = 'HIGH')::int AS high,
+        COUNT(*) FILTER (
+          WHERE "dueDate" IS NOT NULL
+            AND "dueDate" < ${new Date()}
+            AND status <> 'DONE'
+        )::int AS overdue
+      FROM tasks
+      WHERE "userId" = ${userId}
+    `;
 
     const stats = {
       byStatus: {
-        TODO: 0,
-        IN_PROGRESS: 0,
-        DONE: 0,
-        ...Object.fromEntries(statusCounts.map((s) => [s.status, s._count])),
+        TODO: row?.todo ?? 0,
+        IN_PROGRESS: row?.in_progress ?? 0,
+        DONE: row?.done ?? 0,
       },
       byPriority: {
-        LOW: 0,
-        MEDIUM: 0,
-        HIGH: 0,
-        ...Object.fromEntries(
-          priorityCounts.map((p) => [p.priority, p._count])
-        ),
+        LOW: row?.low ?? 0,
+        MEDIUM: row?.medium ?? 0,
+        HIGH: row?.high ?? 0,
       },
-      overdue: overdueTasks,
-      total: statusCounts.reduce((sum, s) => sum + s._count, 0),
+      overdue: row?.overdue ?? 0,
+      total: row?.total ?? 0,
     };
 
     res.status(200).json({ success: true, data: { stats } });
