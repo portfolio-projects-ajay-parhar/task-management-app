@@ -6,6 +6,24 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    overflow-x: hidden;
+    background-color: #f9fafb;
+    color: #111827;
+  }
+
+  html.dark body,
+  body.dark {
+    background-color: #030712;
+    color: #f3f4f6;
   }
 
   * {
@@ -20,4 +38,17 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+}
+
+@keyframes api-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.api-progress-bar {
+  animation: api-progress 1.2s ease-in-out infinite;
 }
