@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, HashRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -87,7 +87,7 @@ const ThemedToaster = () => {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <HashRouter>
         <ThemeProvider>
           <AuthProvider>
             <ApiStatusBar />
@@ -95,7 +95,7 @@ export default function App() {
             <ThemedToaster />
           </AuthProvider>
         </ThemeProvider>
-      </BrowserRouter>
+      </HashRouter>
     </QueryClientProvider>
   );
 }
